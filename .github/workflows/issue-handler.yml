@@ -1,0 +1,48 @@
+name: Claude Code Issue Handler Example
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  process-issue:
+    runs-on: ubuntu-latest
+    # Only run if the issue has the claude-code label
+    if: contains(github.event.issue.labels.*.name, 'claude-code')
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      # Example of using the Claude Code GitHub Action
+      - name: Process issue with Claude Code
+        uses: nicholaslee119/claude-code-github-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Choose one of the following authentication methods:
+          
+          # Option 1: AWS Bedrock authentication
+          BEDROCK_AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+          BEDROCK_AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+          
+          # Option 2: Anthropic API authentication
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          issue-body: ${{ github.event.issue.body }}
+          issue-title: ${{ github.event.issue.title }}
+          # Optional parameters with their default values
+          # branch-name: 'claude-code/issue-${{ github.event.issue.number }}'
+          base-branch: 'main'
+          aws-region: 'us-east-2'
+          model-id: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
+          use-bedrock: 'true'
+          cross-region-inference: 'true'
+          allowed-tools: 'Bash(git diff:*) Bash(git log:*) Edit'

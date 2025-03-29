@@ -1,0 +1,178 @@
+name: 'Claude Code GitHub Integration'
+description: 'Integrates Claude Code with GitHub for automated code changes based on issues'
+author: 'Your Name'
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  issue-number:
+    description: 'The issue number to process'
+    required: true
+  issue-body:
+    description: 'The body content of the issue'
+    required: true
+  issue-title:
+    description: 'The title of the issue'
+    required: true
+  branch-name:
+    description: 'The name of the branch to create'
+    required: false
+    default: 'claude-code/issue-${{ inputs.issue-number }}'
+  base-branch:
+    description: 'The base branch to create PR against'
+    required: false
+    default: 'main'
+  aws-region:
+    description: 'AWS region for Bedrock'
+    required: false
+    default: 'us-east-2'
+  model-id:
+    description: 'Claude model ID to use'
+    required: false
+    default: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
+  use-bedrock:
+    description: 'Whether to use AWS Bedrock (true) or Anthropic API (false)'
+    required: false
+    default: 'true'
+  cross-region-inference:
+    description: 'Whether to enable cross-region inference for Bedrock'
+    required: false
+    default: 'true'
+  allowed-tools:
+    description: 'Tools to allow Claude Code to use'
+    required: false
+    default: 'Bash(git diff:*) Bash(git log:*) Edit'
+
+outputs:
+  pr-number:
+    description: 'The number of the created PR'
+    value: ${{ steps.create-pr.outputs.pr-number }}
+  summary:
+    description: 'Summary of changes made by Claude Code'
+    value: ${{ steps.run-claude.outputs.summary }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install Claude Code CLI
+      shell: bash
+      run: npm install -g @anthropic-ai/claude-code
+        
+    - name: Configure AWS credentials
+      if: ${{ inputs.use-bedrock == 'true' }}
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        aws-access-key-id: ${{ env.BEDROCK_AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+    
+    - name: Create branch for changes
+      id: branch
+      shell: bash
+      run: |
+        BRANCH_NAME="${{ inputs.branch-name }}"
+        git checkout -b $BRANCH_NAME
+        echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+    
+    - name: Run Claude Code
+      id: run-claude
+      shell: bash
+      env:
+        CLAUDE_CODE_USE_BEDROCK: ${{ inputs.use-bedrock == 'true' && '1' || '' }}
+        ANTHROPIC_MODEL: ${{ inputs.model-id }}
+        ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        BEDROCK_CROSS_REGION_INFERENCE: ${{ inputs.use-bedrock == 'true' && inputs.cross-region-inference == 'true' && '1' || '' }}
+        DISABLE_PROMPT_CACHING: "1"
+      run: |
+        # Extract issue content as prompt
+        ISSUE_BODY="${{ inputs.issue-body }}"
+        
+        # Run Claude Code and request a summary
+        claude -p "$ISSUE_BODY
+
+        After making the changes, please provide a summary of what you did in the following format:
+
+        ---SUMMARY---
+        [Your summary of changes here, including what files were modified and what changes were made]
+        ---END SUMMARY---" --allowedTools ${{ inputs.allowed-tools }} Edit > claude_output.txt
+        
+        # Check if any changes were made
+        if [[ -n $(git status --porcelain) ]]; then
+          echo "Changes detected, proceeding with commit"
+          
+          # Extract Claude's summary
+          if grep -q -- "---SUMMARY---" claude_output.txt; then
+            SUMMARY=$(sed -n '/---SUMMARY---/,/---END SUMMARY---/p' claude_output.txt | grep -v -- "---SUMMARY---" | grep -v -- "---END SUMMARY---")
+            echo "summary<<EOF" >> $GITHUB_OUTPUT
+            echo "$SUMMARY" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "No summary found in Claude's output"
+            echo "summary=Changes were made by Claude Code based on the issue description." >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "No changes detected"
+          exit 1
+        fi
+    
+    - name: Commit changes
+      shell: bash
+      run: |
+        git config --global user.name "Claude Code Bot"
+        git config --global user.email "claude-code-bot@example.com"
+        git add .
+        git commit -m "Changes from issue #${{ inputs.issue-number }}: ${{ inputs.issue-title }}"
+        
+        git remote set-url origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        git push origin ${{ steps.branch.outputs.branch-name }}
+    
+    - name: Create Pull Request
+      id: create-pr
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        script: |
+          const prBody = `
+          ## Changes Summary
+          
+          This PR addresses the code changes requested in issue #${{ inputs.issue-number }}.
+          
+          ### Claude's Summary of Changes
+          
+          ${{ steps.run-claude.outputs.summary }}
+          
+          ### Original Request
+          
+          ${{ inputs.issue-body }}
+          
+          ### Implementation Notes
+          
+          These changes were implemented by Claude Code based on the issue description.
+          Please review the changes and provide feedback by commenting with \`Review: your feedback here\`.
+          `;
+          
+          const { data: pr } = await github.rest.pulls.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Claude Code changes for issue #${{ inputs.issue-number }}`,
+            body: prBody,
+            head: '${{ steps.branch.outputs.branch-name }}',
+            base: '${{ inputs.base-branch }}'
+          });
+          
+          core.setOutput('pr-number', pr.number);
+          
+          // Comment on the issue with the PR link
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: ${{ inputs.issue-number }},
+            body: `✅ Created PR #${pr.number} with the requested changes: ${pr.html_url}`
+          });

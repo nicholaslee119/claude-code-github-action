@@ -1,0 +1,122 @@
+name: 'Claude Code PR Review'
+description: 'Processes PR review comments with Claude Code and updates code accordingly'
+author: 'Your Name'
+branding:
+  icon: 'message-square'
+  color: 'purple'
+
+inputs:
+  pr-number:
+    description: 'The PR number to process'
+    required: true
+  comment-id:
+    description: 'The ID of the comment to process'
+    required: true
+  feedback:
+    description: 'The feedback content from the comment'
+    required: true
+  head-ref:
+    description: 'The head ref of the PR'
+    required: true
+  aws-region:
+    description: 'AWS region for Bedrock'
+    required: false
+    default: 'us-east-2'
+  model-id:
+    description: 'Claude model ID to use'
+    required: false
+    default: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
+  use-bedrock:
+    description: 'Whether to use AWS Bedrock (true) or Anthropic API (false)'
+    required: false
+    default: 'true'
+  cross-region-inference:
+    description: 'Whether to enable cross-region inference for Bedrock'
+    required: false
+    default: 'true'
+  allowed-tools:
+    description: 'Tools to allow Claude Code to use'
+    required: false
+    default: 'Bash(git diff:*) Bash(git log:*) Edit'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install Claude Code CLI
+      shell: bash
+      run: npm install -g @anthropic-ai/claude-code
+        
+    - name: Configure AWS credentials
+      if: ${{ inputs.use-bedrock == 'true' }}
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        aws-access-key-id: ${{ env.BEDROCK_AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+    
+    - name: Checkout PR branch
+      shell: bash
+      run: |
+        git fetch origin ${{ inputs.head-ref }}
+        git checkout ${{ inputs.head-ref }}
+    
+    - name: Run Claude Code with review feedback
+      shell: bash
+      env:
+        CLAUDE_CODE_USE_BEDROCK: ${{ inputs.use-bedrock == 'true' && '1' || '' }}
+        ANTHROPIC_MODEL: ${{ inputs.model-id }}
+        ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        BEDROCK_CROSS_REGION_INFERENCE: ${{ inputs.use-bedrock == 'true' && inputs.cross-region-inference == 'true' && '1' || '' }}
+        DISABLE_PROMPT_CACHING: "1"
+      run: |
+        # Extract review feedback as prompt
+        REVIEW_FEEDBACK="${{ inputs.feedback }}"
+        
+        # Run Claude Code with the feedback
+        claude -p "$REVIEW_FEEDBACK" --allowedTools ${{ inputs.allowed-tools }} Edit
+        
+        # Check if any changes were made
+        if [[ -n $(git status --porcelain) ]]; then
+          echo "Changes detected, proceeding with commit"
+        else
+          echo "No changes detected"
+          exit 1
+        fi
+    
+    - name: Commit and push changes
+      shell: bash
+      run: |
+        git config --global user.name "Claude Code Bot"
+        git config --global user.email "claude-code-bot@example.com"
+        git add .
+        git commit -m "Update code based on review feedback in PR #${{ inputs.pr-number }}"
+        
+        git remote set-url origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        git push origin ${{ inputs.head-ref }}
+    
+    - name: Add comment to PR
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        script: |
+          // Add comment to the PR
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: ${{ inputs.pr-number }},
+            body: `✅ Code updated based on review feedback.`
+          });
+          
+          // Add reaction to the review comment
+          await github.rest.reactions.createForIssueComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: ${{ inputs.comment-id }},
+            content: '+1'
+          });

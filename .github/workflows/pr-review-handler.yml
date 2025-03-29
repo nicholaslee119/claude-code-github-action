@@ -1,0 +1,70 @@
+name: Claude Code PR Review Handler Example
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  process-review:
+    runs-on: ubuntu-latest
+    # Only run if the comment is on a PR and starts with "Review:"
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, 'Review:')
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Get PR details
+        id: pr
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.payload.issue.number;
+            const commentId = context.payload.comment.id;
+            const reviewFeedback = context.payload.comment.body.substring(7).trim(); // Remove "Review:" prefix
+            
+            // Get PR details
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            core.setOutput('number', prNumber);
+            core.setOutput('commentId', commentId);
+            core.setOutput('feedback', reviewFeedback);
+            core.setOutput('headRef', pr.head.ref);
+      
+      # Example of using the Claude Code PR Review Action
+      # Note: Replace 'your-username' with your actual GitHub username when using this workflow
+      - name: Process PR review with Claude Code
+        uses: nicholaslee119/claude-code-github-action/pr-review@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Choose one of the following authentication methods:
+          
+          # Option 1: AWS Bedrock authentication
+          BEDROCK_AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+          BEDROCK_AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+          
+          # Option 2: Anthropic API authentication
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          pr-number: ${{ steps.pr.outputs.number }}
+          comment-id: ${{ steps.pr.outputs.commentId }}
+          feedback: ${{ steps.pr.outputs.feedback }}
+          head-ref: ${{ steps.pr.outputs.headRef }}
+          # Optional parameters with their default values
+          # aws-region: 'us-east-2'
+          # model-id: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
+          # use-bedrock: 'true'
+          # cross-region-inference: 'true'
+          # allowed-tools: 'Bash(git diff:*) Bash(git log:*) Edit'
