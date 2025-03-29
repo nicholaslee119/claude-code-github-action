@@ -35,14 +35,19 @@ jobs:
           # Option 2: Anthropic API authentication
           # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
+          # Specify the operation mode
+          mode: 'issue'
+          
+          # Required parameters for issue mode
           issue-number: ${{ github.event.issue.number }}
           issue-body: ${{ github.event.issue.body }}
           issue-title: ${{ github.event.issue.title }}
+          
           # Optional parameters with their default values
           # branch-name: 'claude-code/issue-${{ github.event.issue.number }}'
           base-branch: 'main'
-          aws-region: 'us-east-2'
-          model-id: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
-          use-bedrock: 'true'
-          cross-region-inference: 'true'
-          allowed-tools: 'Bash(git diff:*) Bash(git log:*) Edit'
+          # aws-region: 'us-east-2'
+          # model-id: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
+          # use-bedrock: 'true'
+          # cross-region-inference: 'true'
+          # allowed-tools: 'Bash(git diff:*) Bash(git log:*) Edit'

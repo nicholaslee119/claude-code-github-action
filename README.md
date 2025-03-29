@@ -1,6 +1,6 @@
 # Claude Code GitHub Action
 
-This GitHub Action integrates Claude Code with GitHub workflows, enabling automated code changes based on issues and PR comments.
+This GitHub Action integrates Claude Code with GitHub workflows, enabling automated code changes based on issues and PR comments. It's published on the GitHub Marketplace for easy use in your projects.
 
 ## Features
 
@@ -8,6 +8,7 @@ This GitHub Action integrates Claude Code with GitHub workflows, enabling automa
 - Generate code changes and create PRs with detailed summaries
 - Process PR review comments and update code accordingly
 - Support for both AWS Bedrock and Anthropic API
+- Single action with multiple operation modes
 
 ## Prerequisites
 
@@ -55,14 +56,11 @@ jobs:
           # If using Anthropic API instead of Bedrock:
           # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
+          mode: 'issue'
           issue-number: ${{ github.event.issue.number }}
           issue-body: ${{ github.event.issue.body }}
           issue-title: ${{ github.event.issue.title }}
           base-branch: 'main'  # Adjust according to your repository
-          aws-region: 'us-east-2'
-          model-id: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
-          use-bedrock: 'true'
-          cross-region-inference: 'true'
 ```
 
 ### Processing PR Comments
@@ -112,12 +110,13 @@ jobs:
             core.setOutput('headRef', pr.head.ref);
       
       - name: Process PR review with Claude Code
-        uses: nicholaslee119/claude-code-github-action/pr-review@v1
+        uses: nicholaslee119/claude-code-github-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BEDROCK_AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
           BEDROCK_AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
         with:
+          mode: 'review'
           pr-number: ${{ steps.pr.outputs.number }}
           comment-id: ${{ steps.pr.outputs.commentId }}
           feedback: ${{ steps.pr.outputs.feedback }}
@@ -126,43 +125,42 @@ jobs:
 
 ## Input Parameters
 
-### Main Action (Issue Processing)
+### Common Parameters
 
 | Parameter | Description | Required | Default |
 |-----------|-------------|----------|---------|
-| `issue-number` | The issue number to process | Yes | - |
-| `issue-body` | The body content of the issue | Yes | - |
-| `issue-title` | The title of the issue | Yes | - |
+| `mode` | Operation mode: "issue" or "review" | Yes | `issue` |
+| `aws-region` | AWS region for Bedrock | No | `us-east-2` |
+| `model-id` | Claude model ID to use | No | `anthropic.claude-3-7-sonnet-20250219-v1:0` |
+| `use-bedrock` | Whether to use AWS Bedrock (true) or Anthropic API (false) | No | `true` |
+| `cross-region-inference` | Whether to enable cross-region inference for Bedrock | No | `true` |
+| `allowed-tools` | Tools to allow Claude Code to use | No | `Bash(git diff:*) Bash(git log:*) Edit` |
+
+### Issue Mode Parameters
+
+| Parameter | Description | Required | Default |
+|-----------|-------------|----------|---------|
+| `issue-number` | The issue number to process | Yes (in issue mode) | - |
+| `issue-body` | The body content of the issue | Yes (in issue mode) | - |
+| `issue-title` | The title of the issue | Yes (in issue mode) | - |
 | `branch-name` | The name of the branch to create | No | `claude-code/issue-{issue-number}` |
 | `base-branch` | The base branch to create PR against | No | `main` |
-| `aws-region` | AWS region for Bedrock | No | `us-east-2` |
-| `model-id` | Claude model ID to use | No | `anthropic.claude-3-7-sonnet-20250219-v1:0` |
-| `use-bedrock` | Whether to use AWS Bedrock (true) or Anthropic API (false) | No | `true` |
-| `cross-region-inference` | Whether to enable cross-region inference for Bedrock | No | `true` |
-| `allowed-tools` | Tools to allow Claude Code to use | No | `Bash(git diff:*) Bash(git log:*) Edit` |
 
-### PR Review Action
+### Review Mode Parameters
 
 | Parameter | Description | Required | Default |
 |-----------|-------------|----------|---------|
-| `pr-number` | The PR number to process | Yes | - |
-| `comment-id` | The ID of the comment to process | Yes | - |
-| `feedback` | The feedback content from the comment | Yes | - |
-| `head-ref` | The head ref of the PR | Yes | - |
-| `aws-region` | AWS region for Bedrock | No | `us-east-2` |
-| `model-id` | Claude model ID to use | No | `anthropic.claude-3-7-sonnet-20250219-v1:0` |
-| `use-bedrock` | Whether to use AWS Bedrock (true) or Anthropic API (false) | No | `true` |
-| `cross-region-inference` | Whether to enable cross-region inference for Bedrock | No | `true` |
-| `allowed-tools` | Tools to allow Claude Code to use | No | `Bash(git diff:*) Bash(git log:*) Edit` |
+| `pr-number` | The PR number to process | Yes (in review mode) | - |
+| `comment-id` | The ID of the comment to process | Yes (in review mode) | - |
+| `feedback` | The feedback content from the comment | Yes (in review mode) | - |
+| `head-ref` | The head ref of the PR | Yes (in review mode) | - |
 
 ## Outputs
 
-### Main Action (Issue Processing)
-
-| Output | Description |
-|--------|-------------|
-| `pr-number` | The number of the created PR |
-| `summary` | Summary of changes made by Claude Code |
+| Output | Description | Mode |
+|--------|-------------|------|
+| `pr-number` | The number of the created PR | issue |
+| `summary` | Summary of changes made by Claude Code | issue |
 
 ## How It Works
 

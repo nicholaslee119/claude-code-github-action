@@ -43,10 +43,10 @@ jobs:
             core.setOutput('feedback', reviewFeedback);
             core.setOutput('headRef', pr.head.ref);
       
-      # Example of using the Claude Code PR Review Action
-      # Note: Replace 'your-username' with your actual GitHub username when using this workflow
+      # Example of using the Claude Code GitHub Action for PR reviews
+      # Note: This action will be available after publishing to GitHub Marketplace
       - name: Process PR review with Claude Code
-        uses: nicholaslee119/claude-code-github-action/pr-review@v1
+        uses: nicholaslee119/claude-code-github-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Choose one of the following authentication methods:
@@ -58,10 +58,15 @@ jobs:
           # Option 2: Anthropic API authentication
           # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
+          # Specify the operation mode
+          mode: 'review'
+          
+          # Required parameters for review mode
           pr-number: ${{ steps.pr.outputs.number }}
           comment-id: ${{ steps.pr.outputs.commentId }}
           feedback: ${{ steps.pr.outputs.feedback }}
           head-ref: ${{ steps.pr.outputs.headRef }}
+          
           # Optional parameters with their default values
           # aws-region: 'us-east-2'
           # model-id: 'anthropic.claude-3-7-sonnet-20250219-v1:0'

@@ -1,0 +1,272 @@
+name: 'Claude Code GitHub Integration'
+description: 'Integrates Claude Code with GitHub for automated code changes and PR reviews'
+author: 'nicholaslee119'
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  mode:
+    description: 'Operation mode: "issue" for processing issues, "review" for processing PR reviews'
+    required: true
+    default: 'issue'
+  
+  # Common inputs
+  aws-region:
+    description: 'AWS region for Bedrock'
+    required: false
+    default: 'us-east-2'
+  model-id:
+    description: 'Claude model ID to use'
+    required: false
+    default: 'anthropic.claude-3-7-sonnet-20250219-v1:0'
+  use-bedrock:
+    description: 'Whether to use AWS Bedrock (true) or Anthropic API (false)'
+    required: false
+    default: 'true'
+  cross-region-inference:
+    description: 'Whether to enable cross-region inference for Bedrock'
+    required: false
+    default: 'true'
+  allowed-tools:
+    description: 'Tools to allow Claude Code to use'
+    required: false
+    default: 'Bash(git diff:*) Bash(git log:*) Edit'
+  
+  # Issue mode inputs
+  issue-number:
+    description: 'The issue number to process (required for issue mode)'
+    required: false
+  issue-body:
+    description: 'The body content of the issue (required for issue mode)'
+    required: false
+  issue-title:
+    description: 'The title of the issue (required for issue mode)'
+    required: false
+  branch-name:
+    description: 'The name of the branch to create (for issue mode)'
+    required: false
+    default: 'claude-code/issue-${{ inputs.issue-number }}'
+  base-branch:
+    description: 'The base branch to create PR against (for issue mode)'
+    required: false
+    default: 'main'
+  
+  # Review mode inputs
+  pr-number:
+    description: 'The PR number to process (required for review mode)'
+    required: false
+  comment-id:
+    description: 'The ID of the comment to process (required for review mode)'
+    required: false
+  feedback:
+    description: 'The feedback content from the comment (required for review mode)'
+    required: false
+  head-ref:
+    description: 'The head ref of the PR (required for review mode)'
+    required: false
+
+outputs:
+  pr-number:
+    description: 'The number of the created PR (for issue mode)'
+    value: ${{ steps.create-pr.outputs.pr-number }}
+  summary:
+    description: 'Summary of changes made by Claude Code (for issue mode)'
+    value: ${{ steps.run-claude.outputs.summary }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install Claude Code CLI
+      shell: bash
+      run: npm install -g @anthropic-ai/claude-code
+        
+    - name: Configure AWS credentials
+      if: ${{ inputs.use-bedrock == 'true' }}
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        aws-access-key-id: ${{ env.BEDROCK_AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+    
+    # Issue mode steps
+    - name: Create branch for changes
+      if: ${{ inputs.mode == 'issue' }}
+      id: branch
+      shell: bash
+      run: |
+        BRANCH_NAME="${{ inputs.branch-name }}"
+        git checkout -b $BRANCH_NAME
+        echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+    
+    - name: Run Claude Code for issue
+      if: ${{ inputs.mode == 'issue' }}
+      id: run-claude
+      shell: bash
+      env:
+        CLAUDE_CODE_USE_BEDROCK: ${{ inputs.use-bedrock == 'true' && '1' || '' }}
+        ANTHROPIC_MODEL: ${{ inputs.model-id }}
+        ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        BEDROCK_CROSS_REGION_INFERENCE: ${{ inputs.use-bedrock == 'true' && inputs.cross-region-inference == 'true' && '1' || '' }}
+        DISABLE_PROMPT_CACHING: "1"
+      run: |
+        # Extract issue content as prompt
+        ISSUE_BODY="${{ inputs.issue-body }}"
+        
+        # Run Claude Code and request a summary
+        claude -p "$ISSUE_BODY
+
+        After making the changes, please provide a summary of what you did in the following format:
+
+        ---SUMMARY---
+        [Your summary of changes here, including what files were modified and what changes were made]
+        ---END SUMMARY---" --allowedTools ${{ inputs.allowed-tools }} > claude_output.txt
+        
+        # Check if any changes were made
+        if [[ -n $(git status --porcelain) ]]; then
+          echo "Changes detected, proceeding with commit"
+          
+          # Extract Claude's summary
+          if grep -q -- "---SUMMARY---" claude_output.txt; then
+            SUMMARY=$(sed -n '/---SUMMARY---/,/---END SUMMARY---/p' claude_output.txt | grep -v -- "---SUMMARY---" | grep -v -- "---END SUMMARY---")
+            echo "summary<<EOF" >> $GITHUB_OUTPUT
+            echo "$SUMMARY" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "No summary found in Claude's output"
+            echo "summary=Changes were made by Claude Code based on the issue description." >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "No changes detected"
+          exit 1
+        fi
+    
+    - name: Commit changes for issue
+      if: ${{ inputs.mode == 'issue' }}
+      shell: bash
+      run: |
+        git config --global user.name "Claude Code Bot"
+        git config --global user.email "claude-code-bot@example.com"
+        git add .
+        git commit -m "Changes from issue #${{ inputs.issue-number }}: ${{ inputs.issue-title }}"
+        
+        git remote set-url origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        git push origin ${{ steps.branch.outputs.branch-name }}
+    
+    - name: Create Pull Request
+      if: ${{ inputs.mode == 'issue' }}
+      id: create-pr
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        script: |
+          const prBody = `
+          ## Changes Summary
+          
+          This PR addresses the code changes requested in issue #${{ inputs.issue-number }}.
+          
+          ### Claude's Summary of Changes
+          
+          ${{ steps.run-claude.outputs.summary }}
+          
+          ### Original Request
+          
+          ${{ inputs.issue-body }}
+          
+          ### Implementation Notes
+          
+          These changes were implemented by Claude Code based on the issue description.
+          Please review the changes and provide feedback by commenting with \`Review: your feedback here\`.
+          `;
+          
+          const { data: pr } = await github.rest.pulls.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Claude Code changes for issue #${{ inputs.issue-number }}`,
+            body: prBody,
+            head: '${{ steps.branch.outputs.branch-name }}',
+            base: '${{ inputs.base-branch }}'
+          });
+          
+          core.setOutput('pr-number', pr.number);
+          
+          // Comment on the issue with the PR link
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: ${{ inputs.issue-number }},
+            body: `✅ Created PR #${pr.number} with the requested changes: ${pr.html_url}`
+          });
+    
+    # Review mode steps
+    - name: Checkout PR branch
+      if: ${{ inputs.mode == 'review' }}
+      shell: bash
+      run: |
+        git fetch origin ${{ inputs.head-ref }}
+        git checkout ${{ inputs.head-ref }}
+    
+    - name: Run Claude Code for review
+      if: ${{ inputs.mode == 'review' }}
+      shell: bash
+      env:
+        CLAUDE_CODE_USE_BEDROCK: ${{ inputs.use-bedrock == 'true' && '1' || '' }}
+        ANTHROPIC_MODEL: ${{ inputs.model-id }}
+        ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        BEDROCK_CROSS_REGION_INFERENCE: ${{ inputs.use-bedrock == 'true' && inputs.cross-region-inference == 'true' && '1' || '' }}
+        DISABLE_PROMPT_CACHING: "1"
+      run: |
+        # Extract review feedback as prompt
+        REVIEW_FEEDBACK="${{ inputs.feedback }}"
+        
+        # Run Claude Code with the feedback
+        claude -p "$REVIEW_FEEDBACK" --allowedTools ${{ inputs.allowed-tools }}
+        
+        # Check if any changes were made
+        if [[ -n $(git status --porcelain) ]]; then
+          echo "Changes detected, proceeding with commit"
+        else
+          echo "No changes detected"
+          exit 1
+        fi
+    
+    - name: Commit and push changes for review
+      if: ${{ inputs.mode == 'review' }}
+      shell: bash
+      run: |
+        git config --global user.name "Claude Code Bot"
+        git config --global user.email "claude-code-bot@example.com"
+        git add .
+        git commit -m "Update code based on review feedback in PR #${{ inputs.pr-number }}"
+        
+        git remote set-url origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        git push origin ${{ inputs.head-ref }}
+    
+    - name: Add comment to PR
+      if: ${{ inputs.mode == 'review' }}
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        script: |
+          // Add comment to the PR
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: ${{ inputs.pr-number }},
+            body: `✅ Code updated based on review feedback.`
+          });
+          
+          // Add reaction to the review comment
+          await github.rest.reactions.createForIssueComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: ${{ inputs.comment-id }},
+            content: '+1'
+          });
