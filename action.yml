@@ -46,7 +46,7 @@ inputs:
   branch-name:
     description: 'The name of the branch to create (for issue mode)'
     required: false
-    default: 'claude-code/issue-${{ inputs.issue-number }}'
+    default: 'claude-code/issue'
   base-branch:
     description: 'The base branch to create PR against (for issue mode)'
     required: false
@@ -100,7 +100,9 @@ runs:
       id: branch
       shell: bash
       run: |
-        BRANCH_NAME="${{ inputs.branch-name }}"
+        BASE_BRANCH_NAME="${{ inputs.branch-name }}"
+        ISSUE_NUMBER="${{ inputs.issue-number }}"
+        BRANCH_NAME="${BASE_BRANCH_NAME}-${ISSUE_NUMBER}"
         git checkout -b $BRANCH_NAME
         echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
     
